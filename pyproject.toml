@@ -1,0 +1,18 @@
+[project]
+name = "thesis"
+version = "0.0.1"
+
+[tool.setuptools]
+packages = ["thesis"]
+
+[tool.ruff]
+lint.extend-select = ["F", "E", "W", "I", "D", "D413", "D417"]
+lint.ignore = ["D100", "D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"recipes/*" = ["D"]
+"scripts/*" = ["D"]
+"tests/*" = ["D"]

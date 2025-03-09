@@ -1,0 +1,83 @@
+global_seed: 0
+ha: tfgridnet
+ha_kw:
+  output_channels: 1
+  input_channels: 1
+  layers: 6
+  lstm_hidden_units: 128
+  attn_heads: 4
+  attn_approx_qk_dim: 512
+  _emb_dim: 32
+  _emb_ks: 4
+  _emb_hs: 4
+  activation: PReLU
+  eps: 1.0e-5
+  optimizer: Adam
+  optimizer_kw:
+    lr: 1.0e-3
+  loss: snr
+  loss_kw: null
+  scheduler: ReduceLROnPlateau
+  scheduler_kw:
+    mode: min
+    factor: 0.5
+    patience: 3
+  grad_clip: 5.0
+  stft_kw:
+    frame_length: 512
+    hop_length: 128
+  wav_norm: rms
+dataset:
+  train: default
+  train_kw:
+    dirs:
+      - data/vbdemand/noisy_trainset_28spk_wav
+      - data/vbdemand/clean_trainset_28spk_wav
+    segment_length: 4.0
+    fs: 16000
+    segment_strategy: random
+    seed: 0
+    regexp: "^(?!p226|p287).*$"
+    n_files: all
+  val: default
+  val_kw:
+    dirs:
+      - data/vbdemand/noisy_trainset_28spk_wav
+      - data/vbdemand/clean_trainset_28spk_wav
+    segment_length: null
+    fs: 16000
+    segment_strategy: random
+    seed: 0
+    regexp: "^(p226|p287).*$"
+    n_files: 100
+trainer:
+  workers: 4
+  epochs: 100
+  device: cuda
+  train_batch_sampler: random
+  train_batch_sampler_kw:
+    batch_size: 8
+    dynamic: False
+    fs: 16000
+    seed: 0
+  val_batch_sampler: random
+  val_batch_sampler_kw:
+    batch_size: 1
+    dynamic: False
+    fs: 16000
+    seed: 0
+  ignore_checkpoint: False
+  preload: False
+  ddp: False
+  rank: 0
+  use_wandb: True
+  profile: False
+  val_metrics:
+    pesq:
+      fs: 16000
+    estoi:
+      fs: 16000
+    snr: null
+  val_period: 1
+  use_amp: True
+  save_on_epochs: []

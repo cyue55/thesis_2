@@ -1,0 +1,112 @@
+global_seed: 0
+ha: bsrnn
+ha_kw:
+  input_channels: 1
+  reference_channels: [0]
+  fs: 48000
+  base_channels: 64
+  layers: 6
+  causal: False
+  subband_right_limits: null
+  emb_dim: null
+  aggregate: False
+  optimizer: Adam
+  optimizer_kw:
+    lr: 1.0e-3
+  loss: snr
+  loss_kw: null
+  scheduler: ExponentialLR
+  scheduler_kw:
+    gamma: 0.99
+  grad_clip: 5.0
+  stft_kw:
+    frame_length: 2048
+    hop_length: 480
+  wav_norm: peak
+dataset:
+  train: dynamic
+  train_kw:
+    length: 10000
+    fs: 48000
+    speech_dataset: remote
+    speech_dataset_kw:
+      url:
+        - data/shards/dns-speech-{:02d}.tar
+        - data/shards/libri-{:02d}.tar
+        - data/shards/vctk-{:02d}.tar
+        - data/shards/ears-{:02d}.tar
+        - data/shards/mls-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: True
+    noise_dataset: remote
+    noise_dataset_kw:
+      url:
+        - data/shards/dns-noise-{:02d}.tar
+        - data/shards/fsd50k-{:02d}.tar
+        - data/shards/fma-{:02d}.tar
+        - data/shards/wham-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: True
+    segment_length: 4.0
+    seed: 0
+  val: dynamic
+  val_kw:
+    length: 100
+    fs: 48000
+    speech_dataset: remote
+    speech_dataset_kw:
+      url:
+        - data/shards/dns-speech-{:02d}.tar
+        - data/shards/libri-{:02d}.tar
+        - data/shards/vctk-{:02d}.tar
+        - data/shards/ears-{:02d}.tar
+        - data/shards/mls-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: False
+    noise_dataset: remote
+    noise_dataset_kw:
+      url:
+        - data/shards/dns-noise-{:02d}.tar
+        - data/shards/fsd50k-{:02d}.tar
+        - data/shards/fma-{:02d}.tar
+        - data/shards/wham-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: False
+    segment_length: null
+    seed: 1
+trainer:
+  workers: 16
+  epochs: 150
+  device: cuda
+  train_batch_sampler: default
+  train_batch_sampler_kw:
+    batch_size: 30
+    shuffle: False
+  val_batch_sampler: default
+  val_batch_sampler_kw:
+    batch_size: 1
+    shuffle: False
+  ignore_checkpoint: False
+  preload: False
+  ddp: False
+  rank: 0
+  use_wandb: True
+  profile: False
+  val_metrics:
+    pesq:
+      fs: 48000
+    estoi:
+      fs: 48000
+    snr: null
+  val_period: 10
+  use_amp: True
+  save_on_epochs: []
+  persistent_workers: True

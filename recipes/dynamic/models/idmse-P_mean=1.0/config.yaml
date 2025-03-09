@@ -1,0 +1,141 @@
+global_seed: 0
+ha: idmse
+ha_kw:
+  input_channels: 1
+  reference_channels: [0]
+  net: diffunet
+  net_kw:
+    in_channels: 4
+    out_channels: 2
+    aux_out_channels: 4
+    num_freqs: 1024
+    base_channels: 64
+    channel_mult: [1, 2, 3, 4]
+    num_blocks_per_res: 1
+    noise_channel_mult: 1
+    emb_channel_mult: 4
+    fir_kernel: [1, 1]
+    attn_resolutions: []
+    attn_bottleneck: True
+    encoder_type: standard
+    decoder_type: standard
+    block_type: adm
+    skip_scale: 0.7071067811865476
+    dropout: 0.0
+  sde_training: edm-training
+  sde_training_kw:
+    P_mean: 1.0
+    P_std: 1.0
+  sde_sampling: edm-sampling
+  sde_sampling_kw:
+    sigma_min: 0.002
+    sigma_max: 80
+    rho: 1
+  solver: edm
+  solver_kw:
+    num_steps: 32
+  preconditioning: edm
+  sigma_data: 0.5
+  t_eps: 0.01
+  optimizer: Adam
+  optimizer_kw:
+    lr: 1.0e-4
+  loss: mse
+  loss_kw: null
+  scheduler: null
+  scheduler_kw: null
+  grad_clip: null
+  stft_kw:
+    frame_length: 2048
+    hop_length: 480
+    compression_factor: 0.5
+dataset:
+  train: dynamic
+  train_kw:
+    length: 10000
+    fs: 48000
+    speech_dataset: remote
+    speech_dataset_kw:
+      url:
+        - data/shards/dns-speech-{:02d}.tar
+        - data/shards/libri-{:02d}.tar
+        - data/shards/vctk-{:02d}.tar
+        - data/shards/ears-{:02d}.tar
+        - data/shards/mls-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: True
+    noise_dataset: remote
+    noise_dataset_kw:
+      url:
+        - data/shards/dns-noise-{:02d}.tar
+        - data/shards/fsd50k-{:02d}.tar
+        - data/shards/fma-{:02d}.tar
+        - data/shards/wham-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: True
+    segment_length: 4.0
+    seed: 0
+  val: dynamic
+  val_kw:
+    length: 100
+    fs: 48000
+    speech_dataset: remote
+    speech_dataset_kw:
+      url:
+        - data/shards/dns-speech-{:02d}.tar
+        - data/shards/libri-{:02d}.tar
+        - data/shards/vctk-{:02d}.tar
+        - data/shards/ears-{:02d}.tar
+        - data/shards/mls-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: False
+    noise_dataset: remote
+    noise_dataset_kw:
+      url:
+        - data/shards/dns-noise-{:02d}.tar
+        - data/shards/fsd50k-{:02d}.tar
+        - data/shards/fma-{:02d}.tar
+        - data/shards/wham-{:02d}.tar
+      n_archives: 16
+      loop: True
+      tensor: False
+      resume: False
+    segment_length: null
+    seed: 1
+trainer:
+  workers: 4
+  epochs: 150
+  device: cuda
+  train_batch_sampler: default
+  train_batch_sampler_kw:
+    batch_size: 8
+    shuffle: False
+  val_batch_sampler: default
+  val_batch_sampler_kw:
+    batch_size: 1
+    shuffle: False
+  ignore_checkpoint: False
+  preload: False
+  ddp: False
+  rank: 0
+  use_wandb: True
+  profile: False
+  val_metrics:
+    pesq:
+      fs: 48000
+    estoi:
+      fs: 48000
+    snr: null
+  val_period: 10
+  use_amp: True
+  save_on_epochs: []
+  persistent_workers: True
+  ema: classic
+  ema_kw:
+    beta: 0.999

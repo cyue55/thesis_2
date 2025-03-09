@@ -1,0 +1,79 @@
+global_seed: 0
+ha: bsrnn
+ha_kw:
+  input_channels: 1
+  reference_channels: [0]
+  fs: 16000
+  base_channels: 64
+  layers: 6
+  causal: True
+  subband_right_limits: null
+  emb_dim: null
+  aggregate: False
+  optimizer: Adam
+  optimizer_kw:
+    lr: 1.0e-3
+  loss: snr
+  loss_kw: null
+  scheduler: ExponentialLR
+  scheduler_kw:
+    gamma: 0.99
+  grad_clip: 5.0
+  stft_kw:
+    frame_length: 512
+    hop_length: 128
+  wav_norm: null
+dataset:
+  train: default
+  train_kw:
+    dirs:
+      - data/vbdemand/noisy_trainset_28spk_wav
+      - data/vbdemand/clean_trainset_28spk_wav
+    segment_length: 4.0
+    fs: 16000
+    segment_strategy: random
+    seed: 0
+    regexp: "^(?!p226|p287).*$"
+    n_files: all
+  val: default
+  val_kw:
+    dirs:
+      - data/vbdemand/noisy_trainset_28spk_wav
+      - data/vbdemand/clean_trainset_28spk_wav
+    segment_length: null
+    fs: 16000
+    segment_strategy: random
+    seed: 0
+    regexp: "^(p226|p287).*$"
+    n_files: 100
+trainer:
+  workers: 4
+  epochs: 100
+  device: cuda
+  train_batch_sampler: random
+  train_batch_sampler_kw:
+    batch_size: 32
+    dynamic: False
+    fs: 16000
+    seed: 0
+  val_batch_sampler: random
+  val_batch_sampler_kw:
+    batch_size: 1
+    dynamic: False
+    fs: 16000
+    seed: 0
+  ignore_checkpoint: False
+  preload: False
+  ddp: False
+  rank: 0
+  use_wandb: True
+  profile: False
+  val_metrics:
+    pesq:
+      fs: 16000
+    estoi:
+      fs: 16000
+    snr: null
+  val_period: 1
+  use_amp: True
+  save_on_epochs: []
