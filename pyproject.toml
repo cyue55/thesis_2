@@ -1,9 +1,9 @@
 [project]
-name = "thesis"
+name = "mbchl"
 version = "0.0.1"
 
 [tool.setuptools]
-packages = ["thesis"]
+packages = ["mbchl"]
 
 [tool.ruff]
 lint.extend-select = ["F", "E", "W", "I", "D", "D413", "D417"]
