@@ -109,7 +109,7 @@ dataset:
     audiogram: True
     _zero_audiogram: True
 trainer:
-  workers: 8
+  workers: 16
   epochs: 200
   device: cpu
   train_batch_sampler: default
