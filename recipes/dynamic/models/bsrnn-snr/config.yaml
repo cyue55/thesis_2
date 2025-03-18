@@ -89,7 +89,7 @@ dataset:
     audiogram: False
     _zero_audiogram: True
 trainer:
-  workers: 16
+  workers: 8
   epochs: 200
   device: cuda
   train_batch_sampler: default
