@@ -111,7 +111,7 @@ dataset:
 trainer:
   workers: 16
   epochs: 200
-  device: cpu
+  device: cuda
   train_batch_sampler: default
   train_batch_sampler_kw:
     batch_size: 32

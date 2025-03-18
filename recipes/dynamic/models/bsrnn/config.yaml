@@ -84,7 +84,7 @@ dataset:
     seed: 1
 trainer:
   workers: 16
-  epochs: 150
+  epochs: 200
   device: cuda
   train_batch_sampler: default
   train_batch_sampler_kw:
