@@ -54,11 +54,11 @@ dataset:
     speech_dataset: remote
     speech_dataset_kw:
       url:
-        - mbchl/data/shards/dns-speech-{:02d}.tar
-        - mbchl/data/shards/libri-{:02d}.tar
-        - mbchl/data/shards/vctk-{:02d}.tar
-        - mbchl/data/shards/ears-{:02d}.tar
-        - mbchl/data/shards/mls-{:02d}.tar
+        - data/shards/dns-speech-{:02d}.tar
+        - data/shards/libri-{:02d}.tar
+        - data/shards/vctk-{:02d}.tar
+        - data/shards/ears-{:02d}.tar
+        - data/shards/mls-{:02d}.tar
       n_archives: 16
       loop: True
       tensor: False
@@ -66,10 +66,10 @@ dataset:
     noise_dataset: remote
     noise_dataset_kw:
       url:
-        - mbchl/data/shards/dns-noise-{:02d}.tar
-        - mbchl/data/shards/fsd50k-{:02d}.tar
-        - mbchl/data/shards/fma-{:02d}.tar
-        - mbchl/data/shards/wham-{:02d}.tar
+        - data/shards/dns-noise-{:02d}.tar
+        - data/shards/fsd50k-{:02d}.tar
+        - data/shards/fma-{:02d}.tar
+        - data/shards/wham-{:02d}.tar
       n_archives: 16
       loop: True
       tensor: False
@@ -84,11 +84,11 @@ dataset:
     speech_dataset: remote
     speech_dataset_kw:
       url:
-        - mbchl/data/shards/dns-speech-{:02d}.tar
-        - mbchl/data/shards/libri-{:02d}.tar
-        - mbchl/data/shards/vctk-{:02d}.tar
-        - mbchl/data/shards/ears-{:02d}.tar
-        - mbchl/data/shards/mls-{:02d}.tar
+        - data/shards/dns-speech-{:02d}.tar
+        - data/shards/libri-{:02d}.tar
+        - data/shards/vctk-{:02d}.tar
+        - data/shards/ears-{:02d}.tar
+        - data/shards/mls-{:02d}.tar
       n_archives: 16
       loop: True
       tensor: False
@@ -96,10 +96,10 @@ dataset:
     noise_dataset: remote
     noise_dataset_kw:
       url:
-        - mbchl/data/shards/dns-noise-{:02d}.tar
-        - mbchl/data/shards/fsd50k-{:02d}.tar
-        - mbchl/data/shards/fma-{:02d}.tar
-        - mbchl/data/shards/wham-{:02d}.tar
+        - data/shards/dns-noise-{:02d}.tar
+        - data/shards/fsd50k-{:02d}.tar
+        - data/shards/fma-{:02d}.tar
+        - data/shards/wham-{:02d}.tar
       n_archives: 16
       loop: True
       tensor: False
