@@ -265,14 +265,14 @@ class FrameBasedAveraging(nn.Module):
             Output tensor with shape (batch_size, ..., num_frames)
 
         """
-        # 保存原始维度信息
+        # Save original dimension information
         orig_shape = x.shape
         B = orig_shape[0]  # batch size
-        # 将输入重塑为3D (batch, channels, time)
+        # Reshape input to 3D (batch, channels, time)
         if x.ndim == 2:
             x = x.unsqueeze(1)  # (batch, 1, time)
         elif x.ndim > 3:
-            # 对于更高维度的输入，将中间维度合并为channels
+            # For higher dimensional input, merge middle dimensions into channels
             x = x.reshape(B, -1, x.shape[-1])
 
         C = x.shape[1]  # channels
@@ -283,7 +283,7 @@ class FrameBasedAveraging(nn.Module):
                 f"Input length ({T}) is shorter than frame size ({self.frame_size})."
             )
 
-        # 处理帧
+        # Process frames
         x = x.reshape(B * C, 1, T)
         frames = F.unfold(
             x.unsqueeze(-1),
@@ -299,12 +299,12 @@ class FrameBasedAveraging(nn.Module):
         else:
             raise ValueError(f"Unknown mode: {self.mode}. Use 'mean' or 'rms'.")
 
-        # 恢复原始维度结构
+        # Restore original dimension structure
         if len(orig_shape) > 3:
-            # 将channels维度分解回原始维度
+            # Decompose channels dimension back to original dimensions
             y = y.reshape(orig_shape[:-1] + (-1,))
         elif len(orig_shape) == 2:
-            # 移除添加的channel维度
+            # Remove added channel dimension
             y = y.squeeze(1)
 
         return y
@@ -389,23 +389,23 @@ def debug_plot_frame_avg_stacked(x_orig, x_avg, fs, window_size_ms, stride_ms,
     B, C, T = x_orig.shape
     _, _, N = x_avg.shape
 
-    # Default to ~20帧展示长度
+    # Default to ~20 frames display length
     if time_limit_s is None:
         time_limit_s = (stride_ms * 20) / 1000.0
 
-    # 限制样本数量
+    # Limit sample count
     sample_limit = min(int(time_limit_s * fs), T)
     frame_limit = min(int(time_limit_s / (stride_ms / 1000.0)), N)
 
-    # 时间轴
+    # Time axis
     t_orig = np.arange(sample_limit) / fs
     t_avg = np.arange(frame_limit) * (stride_ms / 1000.0)
 
-    # 取第一个 batch、通道
+    # Take first batch and channel
     sig = x_orig[3, 15, :sample_limit].detach().cpu().numpy()
     rms = x_avg[3, 15, :frame_limit].detach().cpu().numpy()
 
-    # 画图
+    # Plot
     fig, axs = plt.subplots(2, 1, figsize=(12, 4), sharex=True)
     fig.suptitle(
         f"Frame-Based Averaging (B0, C0) — First {time_limit_s*1000:.0f}ms",
