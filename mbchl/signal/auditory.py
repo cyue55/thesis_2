@@ -178,12 +178,7 @@ class LogAdaptation(nn.Module):
     def forward(self, x):
         """Forward pass."""
         assert x.ge(0).all()
-        x = x.div(self.thr).log1p()
-        print("\n=== LogAdaptation Debug ===")
-        print(f"Input shape: {x.shape}")
-        print(f"Input dtype: {x.dtype}")
-        print(f"Input device: {x.device}")
-        return x
+        return x.div(self.thr).log1p()
 
 
 @AdaptationRegistry.register("logdrc")
@@ -224,7 +219,9 @@ class NoAdaptation(nn.Module):
 @IntegrationRegistry.register("frame_avg")
 class FrameBasedAveraging(nn.Module):
     """
-    Frame-based averaging module (mean or RMS), typically applied between adaptation and modulation stages.
+    Frame-based averaging module (mean or RMS).
+
+    Typically applied between adaptation and modulation stages.
 
     Parameters
     ----------
@@ -251,7 +248,9 @@ class FrameBasedAveraging(nn.Module):
         self.stride = int(round(stride_ms * fs / 1000))
 
         if self.frame_size <= 0 or self.stride <= 0:
-            raise ValueError("window_size_ms and stride_ms must convert to positive integers.")
+            raise ValueError(
+                "window_size_ms and stride_ms must convert to positive integers."
+            )
 
     def forward(self, x):
         """Parameters
@@ -385,6 +384,7 @@ def debug_plot_frame_avg_stacked(x_orig, x_avg, fs, window_size_ms, stride_ms,
         Time window to plot in seconds. If None, automatically selects ~20 frames
     save_path : str
         Where to save the figure
+
     """
     B, C, T = x_orig.shape
     _, _, N = x_avg.shape
@@ -407,7 +407,10 @@ def debug_plot_frame_avg_stacked(x_orig, x_avg, fs, window_size_ms, stride_ms,
 
     # 画图
     fig, axs = plt.subplots(2, 1, figsize=(12, 4), sharex=True)
-    fig.suptitle(f"Frame-Based Averaging (B0, C0) — First {time_limit_s*1000:.0f}ms", fontsize=14)
+    fig.suptitle(
+        f"Frame-Based Averaging (B0, C0) — First {time_limit_s*1000:.0f}ms",
+        fontsize=14
+    )
 
     axs[0].plot(t_orig, sig, label="Original", color='steelblue', linewidth=1)
     axs[0].set_ylabel("Amplitude")
