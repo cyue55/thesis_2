@@ -7,5 +7,5 @@
 #BSUB -R "span[hosts=1]"
 #BSUB -oo lsf/logs/%J.out
 #BSUB -eo lsf/logs/%J.err
-source venv/bin/activate
+source .venv/bin/activate
 python ARGS

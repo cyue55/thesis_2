@@ -622,6 +622,7 @@ class BaseHA(nn.Module):
 
     def load_state_dict(self, state_dict):
         """Load the model state dict."""
+        print(state_dict["model"])
         super().load_state_dict(state_dict["model"])
         self._optimizer.load_state_dict(state_dict["optimizer"])
         if self._scheduler is not None:

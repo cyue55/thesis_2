@@ -20,7 +20,7 @@ from ..filesystem import init_filesystem
 from ..metrics import MetricRegistry
 from ..utils import MathDict
 from .ema import EMARegistry
-from .losses import ControllableNoiseReductionHearingLossCompensationLoss
+from .losses import ControllableNoiseReductionHearingLossCompensationLoss, ControllableNoiseReductionHearingLossCompensationLosseFixedWeights, ControllableNoiseReductionHearingLossCompensationLosseSpeechUncertainties, ControllableNoiseReductionHearingLossCompensationLosseEnvUncertainties, ControllableNoiseReductionHearingLossCompensationLosseAllUncertainties, LossPhilippeStyleTG2, ControllableNoiseReductionHearingLossCompensationLosseSixUncertainties, ControllableNoiseReductionHearingLossCompensationLoss7, CNRHLCLossC8, CNRHLCLossC9, CNRHLCLossC10
 
 
 class AudioTrainer:
@@ -660,6 +660,128 @@ class AudioTrainer:
         if isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLoss):
             log["uncertainty_denoising"] = _loss.log_uncertainty_denoising.item()
             log["uncertainty_compensation"] = _loss.log_uncertainty_compensation.item()
+
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss.detach().mean().item()
+        elif isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLosseFixedWeights):
+            log["uncertainty_denoising"] = _loss.log_uncertainty_denoising.item()
+            log["uncertainty_compensation"] = _loss.log_uncertainty_compensation.item()
+
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss_base.detach().mean().item()
+            log['augmented_compensation_loss'] = _loss.augmented_compensation_loss.detach().mean().item()
+            log['modulation_speech_loss'] = _loss.modulation_speech_loss.detach().mean().item()
+            log['modulation_env_loss'] = _loss.modulation_env_loss.mean().item()
+        elif isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLosseSpeechUncertainties):
+            log["uncertainty_denoising"] = _loss.log_uncertainty_denoising.item()
+            log["uncertainty_compensation"] = _loss.log_uncertainty_compensation.item()
+            log["uncertainty_modulation_speech"] = _loss.log_uncertainty_modulation_speech.item() 
+
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['modulation_speech_loss'] = _loss.modulation_speech_loss.detach().mean().item()
+        elif isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLosseEnvUncertainties):
+            log["uncertainty_denoising"] = _loss.log_uncertainty_denoising.item()
+            log["uncertainty_compensation"] = _loss.log_uncertainty_compensation.item()
+            log["uncertainty_modulation_env"] = _loss.log_uncertainty_modulation_env.item()
+
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['modulation_env_loss'] = _loss.modulation_env_loss.detach().mean().item()
+        elif isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLosseAllUncertainties):
+            log["uncertainty_denoising"] = _loss.log_uncertainty_denoising.item()
+            log["uncertainty_compensation"] = _loss.log_uncertainty_compensation.item()
+            log["uncertainty_modulation_speech"] = _loss.log_uncertainty_modulation_speech.item() 
+            log["uncertainty_modulation_env"] = _loss.log_uncertainty_modulation_env.item()
+
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['modulation_speech_loss'] = _loss.modulation_speech_loss.detach().mean().item()
+            log['modulation_env_loss'] = _loss.modulation_env_loss.detach().mean().item()
+        elif isinstance(_loss, LossPhilippeStyleTG2):
+            log["log_uncertainty_nr_speech"] = _loss.log_uncertainty_nr_speech.item()
+            log["uncertainty_compensation"] = _loss.log_uncertainty_nr_env.item()
+            log["uncertainty_modulation_speech"] = _loss.log_uncertainty_hlc_speech.item() 
+            log["uncertainty_modulation_env"] = _loss.log_uncertainty_hlc_env.item()
+
+            log['loss_nr_speech'] = _loss.loss_nr_speech.detach().mean().item()
+            log['loss_nr_env'] = _loss.loss_nr_env.detach().mean().item()
+            log['loss_hlc_speech'] = _loss.loss_hlc_speech.detach().mean().item()
+            log['loss_hlc_env'] = _loss.loss_hlc_env.detach().mean().item()
+        elif isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLosseSixUncertainties):
+            log["uncertainty_denoising"] = _loss.log_uncertainty_denoising.item()
+            log["uncertainty_compensation"] = _loss.log_uncertainty_compensation.item()
+            log["uncertainty_nr_speech"] = _loss.log_uncertainty_nr_speech.item() 
+            log["uncertainty_nr_env"] = _loss.log_uncertainty_nr_env.item()
+            log["uncertainty_hlc_speech"] = _loss.log_uncertainty_hlc_speech.item()
+            log["uncertainty_hlc_env"] = _loss.log_uncertainty_hlc_env.item()
+
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['nr_speech_loss'] = _loss.loss_nr_speech.detach().mean().item()
+            log['nr_env_loss'] = _loss.loss_nr_env.detach().mean().item()
+            log['hlc_speech_loss'] = _loss.loss_hlc_speech.detach().mean().item()
+            log['hlc_env_loss'] = _loss.loss_hlc_env.detach().mean().item() # 
+        elif isinstance(_loss, ControllableNoiseReductionHearingLossCompensationLoss7):
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['compensation_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['modulation_speech_loss'] = _loss.modulation_speech_loss.detach().mean().item()
+            log['modulation_env_loss'] = _loss.modulation_env_loss.detach().mean().item()
+
+            log['uncertainty_denoising'] = _loss.log_uncertainty_denoising.item()
+            log['uncertainty_compensation'] = _loss.log_uncertainty_compensation.item()
+            log['uncertainty_modulation_speech'] = _loss.log_uncertainty_modulation_speech.item()
+            log['uncertainty_modulation_env'] = _loss.log_uncertainty_modulation_env.item()
+        elif isinstance(_loss, CNRHLCLossC8):
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['hlc_speech_loss'] = _loss.loss_hlc_speech.detach().mean().item()
+            log['hlc_env_loss'] = _loss.loss_hlc_env.detach().mean().item()
+            log['uncertainty_denoising'] = _loss.log_uncertainty_denoising.item()
+            log['uncertainty_hlc_speech'] = _loss.log_uncertainty_hlc_speech.item()
+            log['uncertainty_hlc_env'] = _loss.log_uncertainty_hlc_env.item()
+        elif isinstance(_loss, CNRHLCLossC9):
+            log['denoising_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['hlc_speech_loss'] = _loss.loss_nr_speech.detach().mean().item()
+            log['hlc_env_loss'] = _loss.loss_nr_env.detach().mean().item()
+            log['uncertainty_denoising'] = _loss.log_uncertainty_compensation.item()
+            log['uncertainty_hlc_speech'] = _loss.log_uncertainty_nr_speech.item()
+            log['uncertainty_hlc_env'] = _loss.log_uncertainty_nr_env.item()
+        elif isinstance(_loss, CNRHLCLossC10):
+            log['denoising_loss'] = _loss.denoising_loss.detach().mean().item()
+            log['hlc_speech_loss'] = _loss.compensation_loss.detach().mean().item()
+            log['uncertainty_denoising'] = _loss.log_uncertainty_compensation.item()
+            log['uncertainty_hlc_speech'] = _loss.log_uncertainty_denoising.item()
+            # # 不确定性指标组
+            # log["uncertainties"] = {
+            #     "denoising": _loss.log_uncertainty_denoising.item(),
+            #     "compensation": _loss.log_uncertainty_compensation.item(),
+            #     "modulation_speech": _loss.log_uncertainty_modulation_speech.item() if hasattr(_loss, 'log_uncertainty_modulation_speech') else None,
+            #     "modulation_env": _loss.log_uncertainty_modulation_env.item() if hasattr(_loss, 'log_uncertainty_modulation_env') else None
+            # }
+
+            # # 损失指标组
+            # log["losses"] = {
+            #     "denoising": _loss.denoising_loss.item(),
+            #     "compensation": _loss.compensation_loss.item(),
+            #     "modulation_speech": _loss.modulation_speech_loss.item() if hasattr(_loss, 'modulation_speech_loss') else None,
+            #     "modulation_env": _loss.modulation_env_loss.item() if hasattr(_loss, 'modulation_env_loss') else None
+            # }
+
+            # # 添加学习率监控
+            # if hasattr(self.optimizer, 'param_groups'):
+            #     for i, param_group in enumerate(self.optimizer.param_groups):
+            #         log[f"learning_rate_group_{i}"] = param_group['lr']
+
+            # # 添加模型参数统计
+            # model = self._get_model()
+            # for name, param in model.named_parameters():
+            #     if param.requires_grad:
+            #         log[f"param_stats/{name}/mean"] = param.data.mean().item()
+            #         log[f"param_stats/{name}/std"] = param.data.std().item()
+            #         if param.grad is not None:
+            #             log[f"grad_stats/{name}/mean"] = param.grad.mean().item()
+            #             log[f"grad_stats/{name}/std"] = param.grad.std().item()
+
         wandb.log(log)
 
     @property

@@ -1,3 +1,4 @@
+import warnings
 from typing import override
 
 import torch
@@ -485,6 +486,9 @@ class ControllableNoiseReductionHearingLossCompensationLoss(AuditoryLoss):
         self.nh_denoising = nh_denoising
         self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
         self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+
 
     @override
     def compute(self, x, y, lengths, weight=None, audiogram=None):
@@ -492,7 +496,7 @@ class ControllableNoiseReductionHearingLossCompensationLoss(AuditoryLoss):
         compensated, denoised = x.unbind(1)
         noisy, clean = y.unbind(1)
         if self.nh_denoising:
-            denoising_loss = self.loss(
+            self.denoising_loss = self.loss(
                 self.am_nh(denoised, audiogram=None),
                 self.am_nh(clean, audiogram=None),
                 lengths,
@@ -500,14 +504,14 @@ class ControllableNoiseReductionHearingLossCompensationLoss(AuditoryLoss):
                 audiogram=None,
             )
         else:
-            denoising_loss = self.loss(
+            self.denoising_loss = self.loss(
                 self.am_hi(denoised, audiogram=audiogram),
                 self.am_hi(clean, audiogram=audiogram),
                 lengths,
                 weight=weight,
                 audiogram=None,
             )
-        compensation_loss = self.loss(
+        self.compensation_loss = self.loss(
             self.am_hi(compensated, audiogram=audiogram),
             self.am_nh(noisy, audiogram=None),
             lengths,
@@ -515,8 +519,1092 @@ class ControllableNoiseReductionHearingLossCompensationLoss(AuditoryLoss):
             audiogram=None,
         )
         return (
-            torch.exp(-self.log_uncertainty_denoising) * denoising_loss
-            + torch.exp(-self.log_uncertainty_compensation) * compensation_loss
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+        )
+
+@LossRegistry.register("cnrhlc-c2-tg2")
+class ControllableNoiseReductionHearingLossCompensationLosseFixedWeights(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+        # Fixed weights for modulation losses
+        alpha_mod_speech: float = 0.1, # Weight for modulation_speech_loss
+        beta_mod_env: float = 0.1      # Weight for modulation_env_loss
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.alpha_mod_speech = alpha_mod_speech
+        self.beta_mod_env = beta_mod_env
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss_base = torch.tensor(0.0)
+        self.modulation_speech_loss = torch.tensor(0.0)
+        self.modulation_env_loss = torch.tensor(0.0)
+        self.augmented_compensation_loss = torch.tensor(0.0)
+
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_nh_denoised, am_nh_denoised_speech_mod, am_nh_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_nh_clean, am_nh_clean_speech_mod, am_nh_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_nh_denoised,
+                am_nh_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_hi_denoised, am_hi_denoised_speech_mod, am_hi_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_hi_clean, am_hi_clean_speech_mod, am_hi_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_hi_denoised,
+                am_hi_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss_base = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_speech_loss = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_noisy_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_env_loss = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.augmented_compensation_loss = (
+            self.compensation_loss_base
+            + self.alpha_mod_speech * self.modulation_speech_loss
+            + self.beta_mod_env * self.modulation_env_loss
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.augmented_compensation_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+        )
+
+@LossRegistry.register("cnrhlc-c3a-tg2")
+class ControllableNoiseReductionHearingLossCompensationLosseSpeechUncertainties(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_speech = nn.Parameter(torch.zeros(1))
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+        self.modulation_speech_loss = torch.tensor(0.0)
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_nh_denoised, am_nh_denoised_speech_mod, am_nh_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_nh_clean, am_nh_clean_speech_mod, am_nh_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_nh_denoised,
+                am_nh_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_hi_denoised, am_hi_denoised_speech_mod, am_hi_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_hi_clean, am_hi_clean_speech_mod, am_hi_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_hi_denoised,
+                am_hi_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_speech_loss = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_noisy_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_modulation_speech) * self.modulation_speech_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_modulation_speech
+        )
+
+@LossRegistry.register("cnrhlc-c3b-tg2")
+class ControllableNoiseReductionHearingLossCompensationLosseEnvUncertainties(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_env = nn.Parameter(torch.zeros(1))
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+        self.modulation_env_loss = torch.tensor(0.0)
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_nh_denoised, am_nh_denoised_speech_mod, am_nh_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_nh_clean, am_nh_clean_speech_mod, am_nh_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_nh_denoised,
+                am_nh_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_hi_denoised, am_hi_denoised_speech_mod, am_hi_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_hi_clean, am_hi_clean_speech_mod, am_hi_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_hi_denoised,
+                am_hi_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_env_loss = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_modulation_env) * self.modulation_env_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_modulation_env
+        )
+
+@LossRegistry.register("cnrhlc-c4-tg2")
+class ControllableNoiseReductionHearingLossCompensationLosseAllUncertainties(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_env = nn.Parameter(torch.zeros(1))
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+        self.modulation_speech_loss = torch.tensor(0.0)
+        self.modulation_env_loss = torch.tensor(0.0)
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_nh_denoised, am_nh_denoised_speech_mod, am_nh_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_nh_clean, am_nh_clean_speech_mod, am_nh_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_nh_denoised,
+                am_nh_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_hi_denoised, am_hi_denoised_speech_mod, am_hi_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_hi_clean, am_hi_clean_speech_mod, am_hi_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_hi_denoised,
+                am_hi_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_speech_loss = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_noisy_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_env_loss = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_modulation_speech) * self.modulation_speech_loss
+            + torch.exp(-self.log_uncertainty_modulation_env) * self.modulation_env_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_modulation_speech
+            + self.log_uncertainty_modulation_env
+        )
+
+@LossRegistry.register("cnrhlc_phi_tg2") # New name reflecting the change and TG2
+class LossPhilippeStyleTG2(AuditoryLoss):
+    """
+    Implements the CNR-HLC loss based on Professor Philippe's suggestion:
+    All losses are computed on modulation domain features (speech & environment)
+    output directly by the auditory models.
+    Uncertainty weighting is applied to these four modulation-based loss components.
+    Targets for HLC modulation losses follow TG2 specification.
+    """
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="l1", # Base L1/L2 loss function for comparing features
+        loss_kw=None,
+        nh_denoising=True, # Determines if NR targets use NH or HI model for clean speech
+    ):
+        super().__init__()
+        # IMPORTANT ASSUMPTION: AuditoryModel's forward will now return (speech_mod, env_mod)
+        # when configured with a modulation filter.
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss_fn = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+
+        # Four uncertainty parameters for the four modulation-domain loss components
+        self.log_uncertainty_nr_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_nr_env = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_hlc_speech = nn.Parameter(torch.zeros(1)) # Formerly _modulation_speech
+        self.log_uncertainty_hlc_env = nn.Parameter(torch.zeros(1))    # Formerly _modulation_env
+
+        self.loss_nr_speech = torch.tensor(0.0)
+        self.loss_nr_env = torch.tensor(0.0)
+        self.loss_hlc_speech = torch.tensor(0.0)
+        self.loss_hlc_env = torch.tensor(0.0)
+        # # For logging metrics
+        # self.nr_speech_loss_metric = torch.tensor(0.0)
+        # self.nr_env_loss_metric = torch.tensor(0.0)
+        # self.hlc_speech_loss_metric = torch.tensor(0.0)
+        # self.hlc_env_loss_metric = torch.tensor(0.0)
+
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3, "Inputs x and y must be 3D tensors (batch_size, n_channels, time)"
+        # x contains model outputs: (compensated_signal, denoised_signal)
+        # y contains targets: (noisy_signal, clean_signal)
+        compensated_signal, denoised_signal = x.unbind(1)
+        noisy_signal, clean_signal = y.unbind(1)
+
+        # --- Get Auditory Model Outputs (now expected to be speech_mod, env_mod tuples) ---
+
+        # For Denoising Path (NR)
+        if self.nh_denoising:
+            # Process denoised model output with NH model
+            _, pred_nr_speech_mod, pred_nr_env_mod = self.am_nh(denoised_signal, audiogram=None)
+            # Process clean target with NH model
+            _, target_nr_speech_mod, target_nr_env_mod = self.am_nh(clean_signal, audiogram=None)
+        else: # Use HI model for denoising path if nh_denoising is False
+            _, pred_nr_speech_mod, pred_nr_env_mod = self.am_hi(denoised_signal, audiogram=audiogram)
+            _, target_nr_speech_mod, target_nr_env_mod = self.am_hi(clean_signal, audiogram=audiogram) # Target also via HI
+
+        # For Hearing Loss Compensation Path (HLC) - TG2 Targets
+        # Process compensated model output with HI model
+        _, pred_hlc_speech_mod, pred_hlc_env_mod = self.am_hi(compensated_signal, audiogram=audiogram)
+
+        # # Target for HLC Speech (TG2): Clean speech processed by HI model
+        # _, target_hlc_speech_mod, _ = self.am_hi(clean_signal, audiogram=audiogram) # We only need speech_mod
+
+        # Target for HLC Environment (TG2 uses TG0's env target): Noisy speech processed by NH model
+        _, target_hlc_speech_mod, target_hlc_env_mod = self.am_nh(noisy_signal, audiogram=None) # We only need env_mod
+
+
+        # --- Calculate the Four Modulation-Domain Losses ---
+
+        self.loss_nr_speech = self.loss_fn(
+            pred_nr_speech_mod,
+            target_nr_speech_mod,
+            lengths,
+            weight=weight, # Weight might apply per sample, if so, it's fine
+            audiogram=None,
+        )
+        self.loss_nr_env = self.loss_fn(
+            pred_nr_env_mod,
+            target_nr_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.loss_hlc_speech = self.loss_fn(
+            pred_hlc_speech_mod,
+            target_hlc_speech_mod, # TG2 target
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.loss_hlc_env = self.loss_fn(
+            pred_hlc_env_mod,
+            target_hlc_env_mod,    # TG2's env target (from TG0)
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        # Store metrics for logging (batch averaged)
+        # Assuming self.loss_fn returns per-batch-item loss before final mean reduction
+        # self.nr_speech_loss_metric = loss_nr_speech.detach().mean()
+        # self.nr_env_loss_metric = loss_nr_env.detach().mean()
+        # self.hlc_speech_loss_metric = loss_hlc_speech.detach().mean()
+        # self.hlc_env_loss_metric = loss_hlc_env.detach().mean()
+        
+        # --- Combine Losses with Uncertainty Weighting ---
+        total_loss_unreduced = (
+            torch.exp(-self.log_uncertainty_nr_speech) * self.loss_nr_speech
+            + torch.exp(-self.log_uncertainty_nr_env) * self.loss_nr_env
+            + torch.exp(-self.log_uncertainty_hlc_speech) * self.loss_hlc_speech
+            + torch.exp(-self.log_uncertainty_hlc_env) * self.loss_hlc_env
+            + self.log_uncertainty_nr_speech
+            + self.log_uncertainty_nr_env
+            + self.log_uncertainty_hlc_speech
+            + self.log_uncertainty_hlc_env
+        )
+        
+        return total_loss_unreduced # Final scalar loss
+    
+@LossRegistry.register("cnrhlc-c6-tg2")
+class ControllableNoiseReductionHearingLossCompensationLosseSixUncertainties(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_nr_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_nr_env = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_hlc_speech = nn.Parameter(torch.zeros(1)) # Formerly _modulation_speech
+        self.log_uncertainty_hlc_env = nn.Parameter(torch.zeros(1))    # Formerly _modulation_env
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+        self.loss_nr_speech = torch.tensor(0.0)
+        self.loss_nr_env = torch.tensor(0.0)
+        self.loss_hlc_speech = torch.tensor(0.0)
+        self.loss_hlc_env = torch.tensor(0.0)
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_denoised, am_denoised_speech_mod, am_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_clean, am_clean_speech_mod, am_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_denoised,
+                am_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_denoised, am_denoised_speech_mod, am_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_clean, am_clean_speech_mod, am_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_denoised,
+                am_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_speech_loss = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_noisy_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_env_loss = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        self.loss_nr_speech = self.loss(
+            am_denoised_speech_mod,
+            am_clean_speech_mod,
+            lengths,
+            weight=weight, # Weight might apply per sample, if so, it's fine
+            audiogram=None,
+        )
+        self.loss_nr_env = self.loss(
+            am_denoised_env_mod,
+            am_clean_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.loss_hlc_speech = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_noisy_speech_mod, # TG2 target
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.loss_hlc_env = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_nr_speech) * self.loss_nr_speech
+            + torch.exp(-self.log_uncertainty_nr_env) * self.loss_nr_env
+            + torch.exp(-self.log_uncertainty_hlc_speech) * self.loss_hlc_speech
+            + torch.exp(-self.log_uncertainty_hlc_env) * self.loss_hlc_env
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_nr_speech
+            + self.log_uncertainty_nr_env
+            + self.log_uncertainty_hlc_speech
+            + self.log_uncertainty_hlc_env
+        )
+
+@LossRegistry.register("cnrhlc-c4-tg2-old")
+class ControllableNoiseReductionHearingLossCompensationLosseAllUncertaintiesOld(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+        self.modulation_speech_loss = torch.tensor(0.0)
+        self.modulation_env_loss = torch.tensor(0.0)
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_env = nn.Parameter(torch.zeros(1))
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_nh_denoised, am_nh_denoised_speech_mod, am_nh_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_nh_clean, am_nh_clean_speech_mod, am_nh_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_nh_denoised,
+                am_nh_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_hi_denoised, am_hi_denoised_speech_mod, am_hi_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_hi_clean, am_hi_clean_speech_mod, am_hi_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_hi_denoised,
+                am_hi_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_speech_loss = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_clean_speech_mod, # 这里不太好，因为这里使用clean_speech数据他补偿了部分降噪，但是这里的目的是为了补偿，所以这里不太好
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_env_loss = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_modulation_speech) * self.modulation_speech_loss
+            + torch.exp(-self.log_uncertainty_modulation_env) * self.modulation_env_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_modulation_speech
+            + self.log_uncertainty_modulation_env
+        )
+
+@LossRegistry.register("cnrhlc-c7-tg2")
+class ControllableNoiseReductionHearingLossCompensationLoss7(AuditoryLoss):
+    """Controllable noise reduction and hearing loss compensation loss."""
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+        self.modulation_speech_loss = torch.tensor(0.0)
+        self.modulation_env_loss = torch.tensor(0.0)
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_modulation_env = nn.Parameter(torch.zeros(1))
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+        if self.nh_denoising:
+            am_nh_denoised, am_nh_denoised_speech_mod, am_nh_denoised_env_mod = (
+                self.am_nh(denoised, audiogram=None)
+            )
+            am_nh_clean, am_nh_clean_speech_mod, am_nh_clean_env_mod = (
+                self.am_nh(clean, audiogram=None)
+            )
+            self.denoising_loss = self.loss(
+                am_nh_denoised,
+                am_nh_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        else:
+            am_hi_denoised, am_hi_denoised_speech_mod, am_hi_denoised_env_mod = (
+                self.am_hi(denoised, audiogram=audiogram)
+            )
+            am_hi_clean, am_hi_clean_speech_mod, am_hi_clean_env_mod = (
+                self.am_hi(clean, audiogram=audiogram)
+            )
+            self.denoising_loss = self.loss(
+                am_hi_denoised,
+                am_hi_clean,
+                lengths,
+                weight=weight,
+                audiogram=None,
+            )
+        am_hi_compensated, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = (
+            self.am_hi(compensated, audiogram=audiogram)
+        )
+        am_nh_noisy, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = (
+            self.am_nh(noisy, audiogram=None)
+        )
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_speech_loss = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_clean_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.modulation_env_loss = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_clean_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_modulation_speech) * self.modulation_speech_loss
+            + torch.exp(-self.log_uncertainty_modulation_env) * self.modulation_env_loss
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_modulation_speech
+            + self.log_uncertainty_modulation_env
+        )
+
+@LossRegistry.register("cnrhlc-c8")
+class CNRHLCLossC8(AuditoryLoss):
+    """
+    C8 strategy: Asymmetrical loss.
+    NR_loss = holistic denoising loss
+    HLC_loss = hlc_speech_loss + hlc_env_loss
+    """
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        # C9: 只保留需要的三个不确定性参数
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_hlc_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_hlc_env = nn.Parameter(torch.zeros(1))
+        # C9: 初始化对应的损失张量
+        self.denoising_loss = torch.tensor(0.0)
+        self.loss_hlc_speech = torch.tensor(0.0)
+        self.loss_hlc_env = torch.tensor(0.0)
+
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+
+        # --- 数据准备部分 (与c6保持一致) ---
+        if self.nh_denoising:
+            am_denoised, _, _ = self.am_nh(denoised, audiogram=None)
+            am_clean, _, _ = self.am_nh(clean, audiogram=None)
+        else:
+            am_denoised, _, _ = self.am_hi(denoised, audiogram=audiogram)
+            am_clean, _, _ = self.am_hi(clean, audiogram=audiogram)
+
+        _, am_hi_compensated_speech_mod, am_hi_compensated_env_mod = self.am_hi(
+            compensated, audiogram=audiogram
+        )
+        _, am_nh_noisy_speech_mod, am_nh_noisy_env_mod = self.am_nh(noisy, audiogram=None)
+
+        # --- C9 关键改动: 只计算需要的损失项 ---
+        
+        # 保留宏观NR损失
+        self.denoising_loss = self.loss(
+            am_denoised,
+            am_clean,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        # 移除宏观HLC损失
+        # self.compensation_loss = ... (移除)
+
+        # 移除分解式NR损失
+        # self.loss_nr_speech = ... (移除)
+        # self.loss_nr_env = ... (移除)
+
+        # 保留分解式HLC损失
+        self.loss_hlc_speech = self.loss(
+            am_hi_compensated_speech_mod,
+            am_nh_noisy_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.loss_hlc_env = self.loss(
+            am_hi_compensated_env_mod,
+            am_nh_noisy_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        # --- C9 关键改动: 更新最终的损失函数 ---
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_hlc_speech) * self.loss_hlc_speech
+            + torch.exp(-self.log_uncertainty_hlc_env) * self.loss_hlc_env
+            + self.log_uncertainty_denoising
+            + self.log_uncertainty_hlc_speech
+            + self.log_uncertainty_hlc_env
+        )
+@LossRegistry.register("cnrhlc-c9")
+class CNRHLCLossC9(AuditoryLoss):
+    """
+    C9 strategy: Inverse Asymmetrical loss.
+    NR_loss = nr_speech_loss + nr_env_loss
+    HLC_loss = holistic compensation loss
+    """
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        # C9: 只保留需要的三个不确定性参数
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_nr_speech = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_nr_env = nn.Parameter(torch.zeros(1))
+        # C9: 初始化对应的损失张量
+        self.compensation_loss = torch.tensor(0.0)
+        self.loss_nr_speech = torch.tensor(0.0)
+        self.loss_nr_env = torch.tensor(0.0)
+
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        noisy, clean = y.unbind(1)
+
+        # --- 数据准备部分 (与c6保持一致) ---
+        if self.nh_denoising:
+            _, am_denoised_speech_mod, am_denoised_env_mod = self.am_nh(denoised, audiogram=None)
+            _, am_clean_speech_mod, am_clean_env_mod = self.am_nh(clean, audiogram=None)
+        else:
+            _, am_denoised_speech_mod, am_denoised_env_mod = self.am_hi(denoised, audiogram=audiogram)
+            _, am_clean_speech_mod, am_clean_env_mod = self.am_hi(clean, audiogram=audiogram)
+
+        am_hi_compensated, _, _ = self.am_hi(compensated, audiogram=audiogram)
+        am_nh_noisy, _, _ = self.am_nh(noisy, audiogram=None)
+
+        # --- C10 关键改动: 只计算需要的损失项 ---
+
+        # 移除宏观NR损失
+        # self.denoising_loss = ... (移除)
+
+        # 保留宏观HLC损失
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_nh_noisy,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        # 保留分解式NR损失
+        self.loss_nr_speech = self.loss(
+            am_denoised_speech_mod,
+            am_clean_speech_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+        self.loss_nr_env = self.loss(
+            am_denoised_env_mod,
+            am_clean_env_mod,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        # 移除分解式HLC损失
+        # self.loss_hlc_speech = ... (移除)
+        # self.loss_hlc_env = ... (移除)
+
+        # --- C10 关键改动: 更新最终的损失函数 ---
+        return (
+            torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
+            + torch.exp(-self.log_uncertainty_nr_speech) * self.loss_nr_speech
+            + torch.exp(-self.log_uncertainty_nr_env) * self.loss_nr_env
+            + self.log_uncertainty_compensation
+            + self.log_uncertainty_nr_speech
+            + self.log_uncertainty_nr_env
+        )
+
+@LossRegistry.register("cnrhlc-c10")
+class CNRHLCLossC10(AuditoryLoss):
+    """
+    C10 strategy: Redefining the ultimate goal for HLC.
+    NR_loss = holistic denoising loss (target: clean)
+    HLC_loss = holistic compensation loss (target: clean)
+    This intentionally couples the two tasks to optimize for a single, ideal output.
+    """
+
+    def __init__(
+        self,
+        am_kw=None,
+        am_kw_hi=None,
+        am_kw_nh=None,
+        loss="mse",
+        loss_kw=None,
+        nh_denoising=True,
+    ):
+        super().__init__()
+        self.am_hi = AuditoryModel(**(am_kw_hi or am_kw or {}))
+        self.am_nh = AuditoryModel(**(am_kw_nh or am_kw or {}))
+        self.loss = LossRegistry.get(loss)(**(loss_kw or {}))
+        self.nh_denoising = nh_denoising
+        # C11: 只保留两个宏观整体损失的不确定性参数
+        self.log_uncertainty_denoising = nn.Parameter(torch.zeros(1))
+        self.log_uncertainty_compensation = nn.Parameter(torch.zeros(1))
+        # C11: 初始化对应的损失张量
+        self.denoising_loss = torch.tensor(0.0)
+        self.compensation_loss = torch.tensor(0.0)
+
+    @override
+    def compute(self, x, y, lengths, weight=None, audiogram=None):
+        assert x.ndim == y.ndim == 3  # (batch_size, n_channels, time)
+        compensated, denoised = x.unbind(1)
+        _, clean = y.unbind(1) # We don't need the noisy signal for this loss
+
+        # --- 数据准备部分 (与c6保持一致，但只获取需要的特征) ---
+        if self.nh_denoising:
+            am_denoised, _, _ = self.am_nh(denoised, audiogram=None)
+            am_clean, _, _ = self.am_nh(clean, audiogram=None)
+        else:
+            am_denoised, _, _ = self.am_hi(denoised, audiogram=audiogram)
+            am_clean, _, _ = self.am_hi(clean, audiogram=audiogram)
+
+        am_hi_compensated, _, _ = self.am_hi(compensated, audiogram=audiogram)
+
+        # --- C10 关键改动: 只计算两个宏观损失 ---
+
+        # 1. 计算标准的宏观NR损失
+        self.denoising_loss = self.loss(
+            am_denoised,
+            am_clean,
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        # 2. 计算以“干净语音”为目标的宏观HLC损失
+        self.compensation_loss = self.loss(
+            am_hi_compensated,
+            am_clean, # C10 核心改动: HLC的目标不再是am_nh_noisy，而是am_clean
+            lengths,
+            weight=weight,
+            audiogram=None,
+        )
+
+        # --- C10 关键改动: 更新最终的损失函数 ---
+        return (
+            torch.exp(-self.log_uncertainty_denoising) * self.denoising_loss
+            + torch.exp(-self.log_uncertainty_compensation) * self.compensation_loss
             + self.log_uncertainty_denoising
             + self.log_uncertainty_compensation
         )

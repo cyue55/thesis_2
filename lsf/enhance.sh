@@ -20,7 +20,7 @@ EXTRAARGS=""
 SCHEDULE=""
 DEPENDENCY=""
 SCRIPT="enhance.py"
-VENV="venv"
+VENV=".venv"
 
 while true; do
   case "$1" in

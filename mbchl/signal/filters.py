@@ -959,6 +959,126 @@ class ModulationFilterbank(torch.nn.Module):
         return x
 
 
+@FilterbankRegistry.register("lphp_conv1d")
+class ModulationFilterMixConv1d(nn.Module):
+    """Applies low-pass and high-pass Butterworth filters to modulation envelope.
+
+    Returns: speech_mod (low frequencies), env_mod (high frequencies)
+    Configurable via: cutoff, fs, order
+    """
+
+    def __init__(self, cutoff=12.0, fs=16000, order=2):
+        super().__init__()
+        self.lowpass = self._design_filter(cutoff, 'low', fs, order)
+        self.highpass = self._design_filter(cutoff, 'high', fs, order)
+
+    def _design_filter(self, cutoff, filter_type, fs, order):
+        nyq = 0.5 * fs
+        norm_cutoff = cutoff / nyq
+        b, a = scipy.signal.butter(order, norm_cutoff, btype=filter_type, analog=False)
+
+        # impulse response for FIR approximation
+        impulse = np.zeros(512)
+        impulse[0] = 1.0
+        h = scipy.signal.lfilter(b, a, impulse)
+        kernel = torch.tensor(h, dtype=torch.float32).view(1, 1, -1)
+        return kernel
+
+    def _apply_filter(self, x, kernel):
+        B, C, T = x.shape
+        x = x.view(B * C, 1, T)
+        y = F.conv1d(x, kernel.to(x.device), padding='same', groups=1)
+        return y.view(B, C, -1)
+
+    def forward(self, x):
+        """x: (batch, channels, time).
+
+        Returns:
+            speech_mod: low-frequency modulation (≤ cutoff)
+            env_mod: high-frequency modulation (> cutoff)
+        """
+        speech_mod = self._apply_filter(x, self.lowpass)
+        env_mod = self._apply_filter(x, self.highpass)
+        return speech_mod, env_mod
+
+
+@FilterbankRegistry.register("lphp_lfilter")
+class ModulationFilterMixLfilter(nn.Module):# @FilterbankRegistry.register("lphp_lfilter_diff") # 你可以给它一个新名字以区分
+    """
+    Applies low-pass and high-pass Butterworth filters to modulation envelope
+    using a differentiable lfilter implementation (torchaudio.functional.lfilter).
+    Returns: speech_mod (low frequencies), env_mod (high frequencies)
+    """
+
+    def __init__(self, cutoff: float = 12.0, fs: int = 16000, order: int = 2, precision: str = "single"):
+        super().__init__()
+        self.fs = fs
+        self.order = order
+        self.cutoff = cutoff
+
+        if precision == "single":
+            self.dtype = torch.float32
+        elif precision == "double":
+            self.dtype = torch.float64
+        else:
+            raise ValueError(f"precision must be single or double, got {precision}")
+
+        # 设计低通和高通滤波器系数
+        nyq = 0.5 * fs
+        if cutoff >= nyq:
+            raise ValueError(f"Cutoff frequency ({cutoff} Hz) must be less than Nyquist frequency ({nyq} Hz).")
+        
+        norm_cutoff = cutoff / nyq
+        
+        b_low_np, a_low_np = scipy.signal.butter(order, norm_cutoff, btype='low', analog=False)
+        b_high_np, a_high_np = scipy.signal.butter(order, norm_cutoff, btype='high', analog=False)
+
+        # 将系数转换为 PyTorch 张量并注册为 buffer
+        self.register_buffer('b_low', torch.tensor(b_low_np, dtype=self.dtype))
+        self.register_buffer('a_low', torch.tensor(a_low_np, dtype=self.dtype))
+        self.register_buffer('b_high', torch.tensor(b_high_np, dtype=self.dtype))
+        self.register_buffer('a_high', torch.tensor(a_high_np, dtype=self.dtype))
+    def forward(self, x: torch.Tensor):
+        """
+        x: (batch, channels, time)
+        Returns:
+            stacked_output: torch.Tensor of shape (batch, 3, channels, time)
+                            containing [original_x, speech_mod, env_mod]
+                            OR
+            speech_mod, env_mod: if you prefer separate outputs.
+                                 The example below returns separate outputs.
+        """
+        # torchaudio.functional.lfilter expects input x to be (..., time)
+        # and coefficients a, b to be (num_filters, order_a/b) or (order_a/b)
+        # If coefficients are 1D, they are applied to all waveforms.
+        # If x is (Batch, Channels, Time), we want to filter each channel independently.
+        
+        B, C, T = x.shape
+        
+        # Reshape x to (Batch * Channels, Time) for efficient batch processing by lfilter
+        x_reshaped = x.reshape(B * C, T)
+
+        # Apply low-pass filter
+        # .unsqueeze(0) makes a and b 2D: (1, order_a/b) so it's applied to all waveforms in x_reshaped
+        # If a_low and b_low are already appropriate (e.g. 1D), this might not be needed,
+        # but torchaudio expects coefficient tensors.
+        # For lfilter, a (denominator) is first, then b (numerator).
+        speech_mod_reshaped = torchaudio.functional.lfilter(x_reshaped, self.a_low, self.b_low, clamp=False)
+        # Apply high-pass filter
+        env_mod_reshaped = torchaudio.functional.lfilter(x_reshaped, self.a_high, self.b_high, clamp=False)
+
+        # Reshape back to (Batch, Channels, Time)
+        speech_mod = speech_mod_reshaped.reshape(B, C, T)
+        env_mod = env_mod_reshaped.reshape(B, C, T)
+
+        # --- 决定返回格式 ---
+        # 选项1：返回堆叠的张量，类似于你原始代码的输出格式，但维度略有调整以更符合PyTorch习惯
+        # return torch.stack([x, speech_mod, env_mod], dim=1) # Output: (B, 3, C, T)
+
+        # 选项2：更常见的做法是返回分离的张量，调用者可以根据需要处理它们
+        return x, speech_mod, env_mod
+
+
 @FilterbankRegistry.register("drnl")
 class DRNLFilterbank(nn.Module):
     """Dual-Resonance Non-Linear (DRNL) filterbank.

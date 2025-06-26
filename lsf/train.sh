@@ -21,7 +21,7 @@ EXTRAARGS=""
 SCHEDULE=""
 DEPENDENCY=""
 SCRIPT="train.py"
-VENV="venv"
+VENV=".venv"
 
 while true; do
   case "$1" in

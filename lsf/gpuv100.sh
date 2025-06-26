@@ -10,5 +10,5 @@
 #BSUB -gpu "num=1:mode=exclusive_process"
 module load gcc/14.2.0-binutils-2.43
 module load cuda/12.6.2
-source venv/bin/activate
+source .venv/bin/activate
 python ARGS
